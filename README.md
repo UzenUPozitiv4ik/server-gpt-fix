@@ -163,7 +163,7 @@ The proxy listens on `127.0.0.1:<port>` and logs to
 
    ```toml
    model_provider = "local"
-   model          = "gpt-5"
+   model          = "gpt-5.5"
 
    [model_providers.local]
    name     = "server-gpt-fix"
