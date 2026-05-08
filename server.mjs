@@ -8,7 +8,7 @@
 //   1. invalid_encrypted_content
 //      "The encrypted content ... could not be verified". The
 //      `reasoning.encrypted_content` field is opaque server-side state
-//      that only the upstream can decrypt вЂ” we cannot decrypt it or
+//      that only the upstream can decrypt — we cannot decrypt it or
 //      synthesize a replacement, only delete it. The reasoning item's
 //      `id`, `summary`, and `type` are kept so the model can regenerate
 //      context from the summary.
@@ -17,27 +17,23 @@
 //      request unless the upstream complains, then strip + retry).
 //
 //   2. missing_required_parameter on `tools[N].tools`
-//      The proper format of the inner `tools` field is unclear, so the
-//      proxy just removes problematic entries. Specifically:
-//        * tools whose `type` is not in the standard whitelist are
-//          dropped entirely
-//        * if a non-standard wrapper has its own `tools` array of
-//          valid sub-tools, those sub-tools are flattened to the top
-//        * `mcp` entries missing `tools` get an empty array as a
-//          placeholder
-//      If you know the correct format, please open an issue/PR вЂ” proper
-//      handling is preferable to deletion.
+//      The proxy walks the request's `tools` array and rewrites each
+//      entry it can't pass through verbatim. Standard `type`s pass
+//      through; non-standard wrappers with valid sub-tools are
+//      flattened to the top level; everything else is dropped.
 //      Modes (cfg.repair_tools): true/"on" = pre-repair + reactive,
 //      false/"off" = disabled, "auto" = reactive only.
 //
 // Both fixers run pre-emptively. If a 400 still slips through, the
 // proxy reactively retries up to `cfg.max_fixes` times.
 //
-// The proxy injects `Authorization: Bearer <api_key>` itself, so the
-// client doesn't need to know the key.
+// Auth model: the proxy does NOT touch the `Authorization` header.
+// It forwards whatever the client sends, byte-for-byte. Keep your
+// API key in your codex auth file (e.g. `~/.codex/auth.json`); the
+// proxy never reads or stores it.
 //
 // Configuration (looked up in order):
-//   1. ./config.json            (next to this script вЂ” preferred)
+//   1. ./config.json            (next to this script — preferred)
 //   2. ~/.codex/proxy/config.json
 // First run with no config writes a template at location 1 and exits.
 // `node server.mjs --setup` runs an interactive prompt instead.
@@ -58,7 +54,6 @@ const CFG_CANDIDATES = [
 ];
 const DEFAULT_CFG = {
   upstream: "https://examplerouter.top",
-  api_key: "",
   port: 8765,
   strip_encrypted: true,
   repair_tools: true,
@@ -98,7 +93,7 @@ function loadConfigOrExit() {
     console.error(
       `[server-gpt-fix] no config found.\n` +
       `Wrote a template to:\n  ${target}\n` +
-      `Edit it (set "api_key" and "upstream"), or run with --setup, then rerun.`,
+      `Edit it (set "upstream" if needed), or run with --setup, then rerun.`,
     );
     process.exit(2);
   }
@@ -108,12 +103,12 @@ function loadConfigOrExit() {
     console.error(`[server-gpt-fix] config at ${p} is invalid JSON: ${e.message}`);
     process.exit(1);
   }
-  const cfg = { ...DEFAULT_CFG, ...raw, _path: p };
-  if (!cfg.api_key || cfg.api_key === "PASTE_YOUR_KEY_HERE") {
-    console.error(`[server-gpt-fix] api_key is empty in ${p}. Edit it (or run --setup) and rerun.`);
-    process.exit(1);
+  // Migration: silently drop legacy `api_key` so old configs keep working.
+  // The proxy no longer stores or injects the key.
+  if (raw && Object.prototype.hasOwnProperty.call(raw, "api_key")) {
+    delete raw.api_key;
   }
-  // Normalize types
+  const cfg = { ...DEFAULT_CFG, ...raw, _path: p };
   cfg.upstream = String(cfg.upstream).replace(/\/+$/, "");
   cfg.port = Number(cfg.port) || 8765;
   cfg.strip_encrypted = normalizeMode(cfg.strip_encrypted, true);
@@ -160,13 +155,12 @@ async function interactiveSetup() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = q => new Promise(r => rl.question(q, r));
 
-  console.log(`server-gpt-fix setup вЂ” config will be saved to:\n  ${target}\n`);
+  console.log(`server-gpt-fix setup — config will be saved to:\n  ${target}\n`);
+  console.log(`Note: the proxy does not store your API key. Put it in your`);
+  console.log(`codex auth file (e.g. ~/.codex/auth.json) — codex sends the`);
+  console.log(`Authorization header itself, the proxy just forwards it.\n`);
 
   const upstream = ((await ask(`Upstream URL [${existing.upstream}]: `)) || "").trim() || existing.upstream;
-
-  const keyHint = existing.api_key && existing.api_key !== "PASTE_YOUR_KEY_HERE" ? " [keep current]" : "";
-  const apiIn = ((await ask(`API key${keyHint}: `)) || "").trim();
-  const api_key = apiIn || existing.api_key;
 
   const portIn = ((await ask(`Port [${existing.port}]: `)) || "").trim();
   const port = portIn ? Number(portIn) : existing.port;
@@ -185,14 +179,9 @@ async function interactiveSetup() {
 
   rl.close();
 
-  if (!api_key || api_key === "PASTE_YOUR_KEY_HERE") {
-    console.error("\napi_key is required.");
-    process.exit(1);
-  }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, JSON.stringify({
     upstream: upstream.replace(/\/+$/, ""),
-    api_key,
     port,
     strip_encrypted,
     repair_tools,
@@ -254,7 +243,7 @@ function forward(method, urlStr, headers, body) {
 
 // ---------- Fixer 1: encrypted_content ----------
 //
-// We cannot decrypt `reasoning.encrypted_content` вЂ” the key is held by
+// We cannot decrypt `reasoning.encrypted_content` — the key is held by
 // the upstream and bound to the issuing context. The only safe action
 // is to delete it. The reasoning item's `id`, `summary`, and `type` are
 // preserved, so the model can re-derive context from the summary.
@@ -283,20 +272,10 @@ function stripEncryptedReasoning(bodyBuf) {
 
 // ---------- Fixer 2: tools array ----------
 //
-// The proper format of `tools[N].tools` is not documented in a way
-// that's clear for the entries that actually trigger this error.
-// The pragmatic workaround is to remove the offending entries:
-//
-//   * keep entries whose `type` is in the standard whitelist
-//   * for `mcp` entries missing `tools`, add an empty `tools: []`
-//     (this is a guess вЂ” the upstream may want something specific)
-//   * for non-standard wrappers (e.g. `type:"namespace"`) that contain
-//     valid sub-tools in their own `tools` array, lift the sub-tools
-//     to the top level
-//   * otherwise drop the entry
-//
-// If you know what `tools[N].tools` should actually contain, please
-// open an issue/PR.
+// For each `tools[i]` exactly one branch is taken:
+//   * standard `type` — kept (mcp without `tools` gets an empty array)
+//   * non-standard wrapper with valid sub-tools — flattened up
+//   * anything else — dropped
 
 const STANDARD_TOOL_TYPES = new Set([
   "function",
@@ -334,7 +313,7 @@ function repairTools(bodyBuf, log) {
     if (STANDARD_TOOL_TYPES.has(t.type)) {
       if (t.type === "mcp" && !Array.isArray(t.tools)) {
         t.tools = []; changed = true;
-        log("info", `added empty tools[] to mcp tool at index ${i} (placeholder; correct value unknown)`);
+        log("info", `added empty tools[] to mcp tool at index ${i}`);
       }
       out.push(t); continue;
     }
@@ -382,7 +361,6 @@ function startServer() {
   const cfg = loadConfigOrExit();
   const PORT = cfg.port;
   const UPSTREAM = cfg.upstream;
-  const API_KEY = cfg.api_key;
   const log = makeLogger(LOG_PATH);
   const tryFix = makeTryFix(cfg, log);
 
@@ -407,11 +385,13 @@ function startServer() {
       res.writeHead(400); res.end("proxy: " + e.message); return;
     }
 
+    // Forward client headers as-is — including Authorization, which the
+    // client owns. We strip only hop-by-hop / length headers we'll
+    // recompute. The proxy does not see, store, or log the API key.
     const headers = { ...req.headers };
     delete headers.host;
     delete headers["content-length"];
     delete headers["accept-encoding"];
-    headers["authorization"] = `Bearer ${API_KEY}`;
 
     if (shouldPre(cfg.strip_encrypted) && body.length > 0) {
       const r = stripEncryptedReasoning(body);
