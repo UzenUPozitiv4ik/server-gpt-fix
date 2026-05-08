@@ -1,6 +1,5 @@
 {
   "upstream": "https://examplerouter.top",
-  "api_key": "PASTE_YOUR_KEY_HERE",
   "port": 8765,
   "strip_encrypted": true,
   "repair_tools": true,
