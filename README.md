@@ -127,7 +127,7 @@ client doesn't need the key. In `~/.codex/config.toml`:
 
 ```toml
 model_provider = "local"
-model          = "gpt-5"
+model          = "gpt-5.5"
 
 [model_providers.local]
 name     = "server-gpt-fix"
