@@ -167,7 +167,7 @@ The proxy listens on `127.0.0.1:<port>` and logs to
 
    [model_providers.local]
    name     = "server-gpt-fix"
-   base_url = "http://127.0.0.1:8765/v1"
+   base_url = "http://127.0.0.1:<port>/v1"
    wire_api = "responses"
    ```
 
