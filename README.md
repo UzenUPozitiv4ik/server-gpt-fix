@@ -1,10 +1,11 @@
-## Community
+## Community / 社区
 
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-community-00a1d6)](https://linux.do)
 
-This project acknowledges and links to the LINUX DO community:
-
+This project acknowledges and links to the LINUX DO community / 本项目认可并链接 LINUX DO 社区：
 https://linux.do
+LINUX DO is a Chinese tech community where users share development, AI, and open-source projects / LINUX DO 是一个中文技术社区，佬友们会分享开发、AI、开源项目等内容。
+
 
 # server-gpt-fix
 
