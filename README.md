@@ -1,3 +1,11 @@
+## Community
+
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-community-00a1d6)](https://linux.do)
+
+This project acknowledges and links to the LINUX DO community:
+
+https://linux.do
+
 # server-gpt-fix
 
 A local HTTP proxy for the **OpenAI Responses API** (`/v1/responses`)
