@@ -169,7 +169,6 @@ The proxy listens on `127.0.0.1:<port>` and logs to
    name     = "server-gpt-fix"
    base_url = "http://127.0.0.1:8765/v1"
    wire_api = "responses"
-   env_key  = "OPENAI_API_KEY"
    ```
 
    `env_key` tells codex which key from `auth.json` to send in
